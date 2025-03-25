@@ -1,0 +1,27 @@
+services:
+  weixin-mp:
+    image: henryhe613/weixin-mp:0.1
+    container_name: weixin-mp
+    network_mode: bridge
+    links:
+     - weixin-redis
+    restart: unless-stopped
+     - "127.0.0.1:5000:80"
+    environment:
+      - APPID=
+      - APPSECRET=
+      - OPENID=
+      - TEMPLATE_ID=
+      - VERIFY_TOKEN=
+      - WEB_PORT=80
+      - REDIS_HOST=weixin-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+
+  weixin-redis:
+    image: redis/redis-stack:latest
+    container_name: weixin-redis
+    networks_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
