@@ -6,6 +6,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from utils.mp_utils import MPUtils
 from utils.redis_utils import RedisUtils
+from utils.mongo_utils import MongoUtils
 import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, Response
 
@@ -13,12 +14,16 @@ load_dotenv()
 
 app = FastAPI()
 redis_client = RedisUtils()
+mongo_client = MongoUtils()
 mp = MPUtils()
 
 # 微信公众平台配置
-VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+DOMAIN = os.getenv("DOMAIN")
+MAIN_PATH = os.getenv("MAIN_PATH")
 
-@app.get("/wechat")
+
+@app.get(MAIN_PATH)
 async def verify_server(request: Request):
     # 验证微信服务器有效性（GET 请求）
     signature = request.query_params.get("signature", "")
@@ -37,7 +42,7 @@ async def verify_server(request: Request):
         return Response(content="Verification Failed", status_code=403)
 
 
-@app.post("/wechat")
+@app.post(MAIN_PATH)
 async def handle_message(request: Request):
     # 处理用户消息（POST 请求）
     body = await request.body()
@@ -53,6 +58,18 @@ async def handle_message(request: Request):
         if content == "/id":
             # 返回 OpenID
             reply = f"您的 OpenID 是：{from_user}"
+            xml_response = generate_xml(to_user, from_user, reply)
+            return Response(content=xml_response, media_type="application/xml")
+        elif content == "/help":
+            # 返回帮助信息
+            reply = (
+                "/id - 获取您的 OpenID\n" "/group - 群组操作\n" "/help - 获取帮助信息"
+            )
+            xml_response = generate_xml(to_user, from_user, reply)
+            return Response(content=xml_response, media_type="application/xml")
+        elif content == "/group":
+            # 返回group的操作提示
+            reply = "/group create [name] - 创建群组\n" "/group join [name] - 加入群组"
             xml_response = generate_xml(to_user, from_user, reply)
             return Response(content=xml_response, media_type="application/xml")
 
@@ -71,34 +88,53 @@ def generate_xml(to_user: str, from_user: str, content: str) -> str:
     </xml>"""
 
 
-@app.post("/wechat/template")
-async def handle_template_message(request: Request):
+@app.post(MAIN_PATH + "/send")
+async def send_message(request: Request):
     # 处理模板消息推送（POST 请求）
     client_ip = request.client.host
     body = await request.body()
     body = json.loads(body)
+    time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if 'openid' not in body or 'title' not in body:
+    required_keys = {"openid", "title", "content"}
+    if not required_keys.issubset(body.keys()):
+        missing_keys = required_keys - body.keys()
         return Response(
-            content=json.dumps({'code': 400, 'msg': 'Missing parameters.'}),
+            content=json.dumps({"code": 400, "msg": "Missing parameters."}),
             status_code=400,
-            media_type='application/json'
+            media_type="application/json",
         )
+    mongo_result = mongo_client.insert(
+        {
+            "openid": body["openid"],
+            "title": body["title"],
+            "content": body["content"],
+            "ip": client_ip,
+            "date": time_now,
+        }
+    )
+    print(mongo_result)
     result = await mp.send_message(
         openid=body["openid"],
         title=body["title"],
         ip=client_ip,
-        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        redirect_url="https://cn.bing.com",
+        date=time_now,
+        redirect_url=DOMAIN
+        + MAIN_PATH
+        + "/message?id="
+        + str(mongo_result.inserted_id),
     )
+    return Response(content=json.dumps(result), media_type="application/json")
 
-    return Response(
-        content=json.dumps(result),
-        media_type='application/json'
-    )
+
+@app.get(MAIN_PATH + "/message")
+async def get_message(id: str):
+    # 获取推送详细信息
+    result = mongo_client.find_one({"_id": id})
+    del result["openid"]
+    return Response(content=json.dumps(result), media_type="application/json")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('WEB_PORT', 80)))
-
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("WEB_PORT", 80)))
