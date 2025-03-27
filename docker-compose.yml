@@ -53,6 +53,7 @@ services:
       - ./mysql_data/log:/var/log/mysql
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
+      - ./initdb/:/docker-entrypoint-initdb.d/
     command:
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_general_ci
