@@ -55,6 +55,9 @@ class LOG:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
         
+        # 禁用日志传播
+        self.logger.propagate = False
+        
         # 避免重复添加handler
         if not self.logger.handlers:
             # 创建控制台处理器 (带颜色)
