@@ -117,7 +117,7 @@ async def handle_message(
                         if mysql_client.create_group(openid=from_user, name=group_name):
                             reply = f"群组 {group_name} 创建成功"
                         else:
-                            reply = f"群组 {group_name} 已存在"
+                            reply = f"群组 {group_name} 创建失败"
                     except Exception as e:
                         reply = f"创建群组失败：{e}"
                 else:
@@ -131,7 +131,7 @@ async def handle_message(
                     ):
                         reply = f"成功删除群组 {group_name}"
                     else:
-                        reply = f"群组 {group_name} 删除失败"
+                        reply = f"群组 {group_name} 删除失败，请检查是否是群组创建者"
                 except Exception as e:
                     reply = f"删除群组失败：{e}"
             elif len(content_block) == 3 and content_block[1] == "join":
@@ -141,7 +141,7 @@ async def handle_message(
                     if mysql_client.join_group(openid=from_user, group_name=group_name):
                         reply = f"成功加入群组 {group_name}"
                     else:
-                        reply = f"群组 {group_name} 不存在"
+                        reply = f"群组 {group_name} 不存在/已加入"
                 except Exception as e:
                     reply = f"加入群组失败：{e}"
             elif len(content_block) == 3 and content_block[1] == "leave":
@@ -151,9 +151,9 @@ async def handle_message(
                     if mysql_client.leave_group(
                         openid=from_user, group_name=group_name
                     ):
-                        reply = f"成功退出群组 {group_name}"
+                        reply = f"成功退出群组 {group_name}（有没有种可能，根本没有这个群组，或你没有加入过）"
                     else:
-                        reply = f"退出群组 {group_name} 失败"
+                        reply = f"退出群组 {group_name} 失败，请检查是否已加入"
                 except Exception as e:
                     reply = f"退出群组失败：{e}"
             elif len(content_block) == 2 and content_block[1] == "list":
