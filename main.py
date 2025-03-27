@@ -138,9 +138,7 @@ async def send_message(request: Request):
         title=body["title"],
         ip=client_ip,
         date=time_now,
-        redirect_url=DOMAIN
-        + MAIN_PATH
-        + "/message?id="
+        redirect_url=DOMAIN + "/weixin_msg/"
         + str(mongo_result.inserted_id),
     )
     return Response(content=json.dumps(result), media_type="application/json")

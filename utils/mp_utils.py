@@ -8,31 +8,40 @@ from utils.redis_utils import RedisUtils
 
 
 class MPUtils:
+    logger = LOG(level=LOG.DEBUG).logger
+
     def __init__(self):
         self.APPID = os.getenv("APPID")
         self.APPSECRET = os.getenv("APPSECRET")
         self.TEMPLATE_ID = os.getenv("TEMPLATE_ID")
-        self.logger = LOG(level=LOG.DEBUG).logger
         self.redis_client = RedisUtils()
         self.access_token = (
             self.redis_client.get("access_token", decode=True)
             if self.redis_client.exists("access_token")
             else None
         )
-        # 启用线程，刷新access_token
-        self.redis_client.set("thread_refresh_access_token", 1)
+        self.stop_event = threading.Event()  # 使用本地事件
         self.thread_refresh_access_token = threading.Thread(
-            target=self.refresh_access_token
+            target=self.refresh_access_token, daemon=True
         )
         self.thread_refresh_access_token.start()
-        time.sleep(2)
         self.logger.info(f"access_token: {self.access_token}")
 
     def __del__(self):
-        self.logger.info("清除access_token刷新线程")
-        self.redis_client.delete("thread_refresh_access_token")
-        self.thread_refresh_access_token.join()
-        self.logger.info("清除access_token刷新线程 完成")
+        try:
+            self.logger.info("正在停止access_token刷新线程...")
+
+            self.stop_event.set()  # 使用事件通知线程停止
+
+            # 设置join超时，防止永久阻塞
+            self.thread_refresh_access_token.join(timeout=2.0)
+
+            if self.thread_refresh_access_token.is_alive():
+                self.logger.warning("线程未能在超时时间内完成，但程序会继续退出")
+            else:
+                self.logger.info("access_token刷新线程已成功停止")
+        except Exception as e:
+            self.logger.error(f"停止线程时出错: {e}")
 
     def get_access_token(self) -> None:
         url = "https://api.weixin.qq.com/cgi-bin/token"
@@ -45,7 +54,7 @@ class MPUtils:
         self.access_token = response.json()["access_token"]
 
     def refresh_access_token(self):
-        while self.redis_client.exists("thread_refresh_access_token"):
+        while not self.stop_event.is_set():
             if not self.redis_client.exists("access_token_valid"):
                 self.get_access_token()
                 self.redis_client.set("access_token", self.access_token, 720)

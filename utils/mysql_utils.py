@@ -6,7 +6,7 @@ from utils.log_utils import LOG
 
 class MysqlUtils:
     # 日志记录器
-    logger = LOG.logger
+    logger = LOG().logger
 
     # 数据库表名
     USERS_TABLE = "users"
@@ -42,6 +42,25 @@ class MysqlUtils:
         self.user = user if user else os.getenv("MYSQL_USER", "root")
         self._password = password if password else os.getenv("MYSQL_PASSWORD", "root")
         self.database = database if database else os.getenv("MYSQL_DATABASE", "weixin")
+        
+        try:
+            self.logger.info(f"Checking/Creating database ...")
+            conn = mysql.connector.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self._password,
+            )
+            cursor = conn.cursor()
+            
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except mysql.connector.Error as err:
+            self.logger.error(f"创建数据库时出错: {err}")
+            raise
+        
         self.logger.info(f"MySQL connecting ...")
         self._db = mysql.connector.connect(
             host=self.host,
@@ -52,6 +71,8 @@ class MysqlUtils:
         )
         self._cursor = self._db.cursor()
         self.logger.info(f"MySQL connected.")
+        
+        self.create_tables()
 
     def __del__(self) -> None:
         """
@@ -59,10 +80,37 @@ class MysqlUtils:
 
         这确保了无论如何退出程序，都能正确释放数据库资源，防止连接泄漏
         """
-        self.logger.info(f"MySQL disconnecting ...")
-        self._cursor.close()
-        self._db.close()
-        self.logger.info(f"MySQL disconnected.")
+        # self.logger.info(f"MySQL disconnecting ...")
+        # self._cursor.close()
+        # self._db.close()
+        # self.logger.info(f"MySQL disconnected.")
+        try:
+            self.logger.info(f"MySQL disconnecting ...")
+            
+            # 检查_cursor是否存在且可用
+            if hasattr(self, '_cursor') and self._cursor:
+                try:
+                    self._cursor.close()
+                except (ReferenceError, AttributeError):
+                    # 忽略弱引用错误
+                    pass
+                    
+            # 检查_db是否存在且可用
+            if hasattr(self, '_db') and self._db:
+                try:
+                    self._db.close()
+                except (ReferenceError, AttributeError):
+                    # 忽略弱引用错误
+                    pass
+                    
+            self.logger.info(f"MySQL disconnected.")
+        except Exception as e:
+            # 捕获所有异常，因为__del__方法不能抛出异常
+            try:
+                self.logger.error(f"Error during MySQL disconnect: {e}")
+            except:
+                # 如果logger也不可用，则静默失败
+                pass
 
     def create_tables(self) -> None:
         """
