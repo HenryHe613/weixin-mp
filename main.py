@@ -1,10 +1,12 @@
 import os
+import re
 import time
 import json
 import hashlib
 from datetime import datetime
 from dotenv import load_dotenv
 from utils.mp_utils import MPUtils
+from utils.mysql_utils import MysqlUtils
 from utils.redis_utils import RedisUtils
 from utils.mongo_utils import MongoUtils
 import xml.etree.ElementTree as ET
@@ -13,6 +15,7 @@ from fastapi import FastAPI, Request, Response
 load_dotenv()
 
 app = FastAPI()
+mysql_client = MysqlUtils()
 redis_client = RedisUtils()
 mongo_client = MongoUtils()
 mp = MPUtils()
@@ -44,6 +47,16 @@ async def verify_server(request: Request):
 
 @app.post(MAIN_PATH)
 async def handle_message(request: Request):
+    def generate_xml(to_user: str, from_user: str, content: str) -> str:
+        # 生成微信要求的 XML 响应
+        return f"""<xml>
+            <ToUserName><![CDATA[{from_user}]]></ToUserName>
+            <FromUserName><![CDATA[{to_user}]]></FromUserName>
+            <CreateTime>{int(time.time())}</CreateTime>
+            <MsgType><![CDATA[text]]></MsgType>
+            <Content><![CDATA[{content}]]></Content>
+        </xml>"""
+    
     # 处理用户消息（POST 请求）
     body = await request.body()
     root = ET.fromstring(body.decode("utf-8"))
@@ -55,37 +68,43 @@ async def handle_message(request: Request):
 
     if msg_type == "text":
         content = root.find("Content").text.strip()
+        content_block = content.split(" ")
         if content == "/id":
             # 返回 OpenID
             reply = f"您的 OpenID 是：{from_user}"
-            xml_response = generate_xml(to_user, from_user, reply)
-            return Response(content=xml_response, media_type="application/xml")
         elif content == "/help":
             # 返回帮助信息
             reply = (
                 "/id - 获取您的 OpenID\n" "/group - 群组操作\n" "/help - 获取帮助信息"
             )
-            xml_response = generate_xml(to_user, from_user, reply)
-            return Response(content=xml_response, media_type="application/xml")
-        elif content == "/group":
-            # 返回group的操作提示
-            reply = "/group create [name] - 创建群组\n" "/group join [name] - 加入群组"
+        elif len(content_block) and content_block[0] == "/group":
+            if len(content_block) == 1:
+                # 返回group的操作提示
+                reply = "/group create [name] - 创建群组\n" "/group join [name] - 加入群组"
+            elif len(content_block) == 3 and content_block[1] == "create":
+                # 创建群组
+                group_name = content_block[2]
+                if re.fullmatch(r'^[\w]+$', group_name):
+                    # 群组名只能包含字母、数字和下划线
+                    try:
+                        mysql_client.create_group(name=group_name, owner_openid=from_user)
+                        reply = f"群组 {group_name} 创建成功"
+                    except Exception as e:
+                        reply = f"创建群组失败：{e}"
+            elif len(content_block) == 3 and content_block[1] == "join":
+                # 加入群组
+                group_name = content_block[2]
+                try:
+                    mysql_client.join_group(openid=from_user, group_name=group_name)
+                    reply = f"成功加入群组 {group_name}"
+                except Exception as e:
+                    reply = f"加入群组失败：{e}" 
+        if 'reply' in locals() and type(reply) == str and len(reply):
             xml_response = generate_xml(to_user, from_user, reply)
             return Response(content=xml_response, media_type="application/xml")
 
     # 默认返回 success（微信要求）
     return Response(content="success")
-
-
-def generate_xml(to_user: str, from_user: str, content: str) -> str:
-    # 生成微信要求的 XML 响应
-    return f"""<xml>
-        <ToUserName><![CDATA[{from_user}]]></ToUserName>
-        <FromUserName><![CDATA[{to_user}]]></FromUserName>
-        <CreateTime>{int(time.time())}</CreateTime>
-        <MsgType><![CDATA[text]]></MsgType>
-        <Content><![CDATA[{content}]]></Content>
-    </xml>"""
 
 
 @app.post(MAIN_PATH + "/send")

@@ -2,11 +2,8 @@ services:
   weixin-mp:
     image: henryhe613/weixin-mp:0.1
     container_name: weixin-mp
-    network_mode: bridge
-    links:
-     - weixin-redis
+    network_mode: host
     restart: unless-stopped
-     - "127.0.0.1:5000:80"
     environment:
       - APPID=
       - APPSECRET=
@@ -21,7 +18,43 @@ services:
   weixin-redis:
     image: redis/redis-stack:latest
     container_name: weixin-redis
-    networks_mode: bridge
     restart: unless-stopped
+    networks_mode: bridge
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
-      - ./data:/data
+      - ./redis_data:/data
+  
+  mongo:
+    image: mongo:latest
+    container_name: weixin-mongodb
+    restart: unless-stopped
+    networks_mode: bridge
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    volumes:
+      - ./mongo_data:/data/db
+  
+  mysql:
+    image: mysql:5.7.44
+    container_name: weixin-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - ./mysql_data/data/:/var/lib/mysql
+      - ./mysql_data/conf/my.cnf:/etc/mysql/my.cnf
+      - ./mysql_data/log:/var/log/mysql
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    command:
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_general_ci
+      --explicit_defaults_for_timestamp=true
+      --lower_case_table_names=1

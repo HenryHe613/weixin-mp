@@ -45,15 +45,14 @@ class MPUtils:
         self.access_token = response.json()["access_token"]
 
     def refresh_access_token(self):
-        if not self.redis_client.exists("thread_refresh_access_token"):
-            return
-        elif not self.redis_client.exists("access_token_valid"):
-            self.get_access_token()
-            self.redis_client.set("access_token", self.access_token, 720)
-            self.redis_client.set("access_token_valid", 1, 700)
-            self.logger.info("刷新access_token成功")
-        else:
-            time.sleep(1)
+        while self.redis_client.exists("thread_refresh_access_token"):
+            if not self.redis_client.exists("access_token_valid"):
+                self.get_access_token()
+                self.redis_client.set("access_token", self.access_token, 720)
+                self.redis_client.set("access_token_valid", 1, 700)
+                self.logger.info("刷新access_token成功")
+            else:
+                time.sleep(1)
 
     def get_user_list(self):
         url = f"https://api.weixin.qq.com/cgi-bin/user/get"

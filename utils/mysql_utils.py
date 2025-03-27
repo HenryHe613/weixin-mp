@@ -41,7 +41,7 @@ class MysqlUtils:
         self.port = int(port) if port else int(os.getenv("MYSQL_PORT", 3306))
         self.user = user if user else os.getenv("MYSQL_USER", "root")
         self._password = password if password else os.getenv("MYSQL_PASSWORD", "root")
-        self.database = database if database else os.getenv("MYSQL_DATABASE", "test")
+        self.database = database if database else os.getenv("MYSQL_DATABASE", "weixin")
         self.logger.info(f"MySQL connecting ...")
         self._db = mysql.connector.connect(
             host=self.host,
@@ -209,34 +209,66 @@ class MysqlUtils:
             self.logger.error(f"创建用户时出错: {err}")
             raise
 
-    def join_group(self, openid: str, group_id: int) -> None:
+    def join_group(self, openid: str, group_name: str) -> int:
         """
-        加入群组
-
+        通过群组名称加入群组
+        
         Args:
             openid (str): 用户的openid
-            group_id (int): 群组ID
-
+            group_name (str): 群组名称
+            
+        Returns:
+            int: 成功加入的群组ID
+            
         Raises:
             MysqlUtils.NoSuchUserError: 未找到对应的用户
             MysqlUtils.NoSuchGroupError: 未找到对应的群组
             mysql.connector.Error: 数据库操作错误
         """
         try:
-            sql = f"""
-                INSERT INTO {self.USER_GROUPS_TABLE} (openid, group_id)
-                VALUES (%s, %s);
+            # 先查询群组是否存在
+            find_sql = f"""
+                SELECT group_id FROM {self.GROUPS_TABLE}
+                WHERE name = %s;
             """
-            self._cursor.execute(sql, (openid, group_id))
+            self._cursor.execute(find_sql, (group_name,))
+            group_result = self._cursor.fetchone()
+            
+            # 如果群组不存在则抛出异常
+            if not group_result:
+                raise self.NoSuchGroupError(f"群组 '{group_name}' 不存在")
+                
+            group_id = group_result[0]  # 获取群组ID
+            
+            # 检查用户是否已经在群组中
+            check_sql = f"""
+                SELECT COUNT(*) FROM {self.USER_GROUPS_TABLE}
+                WHERE openid = %s AND group_id = %s;
+            """
+            self._cursor.execute(check_sql, (openid, group_id))
+            is_member = self._cursor.fetchone()[0] > 0
+            
+            if is_member:
+                self.logger.info(f"用户 {openid} 已经是群组 '{group_name}' 的成员")
+                return group_id
+                
+            # 加入群组
+            join_sql = f"""
+                INSERT INTO {self.USER_GROUPS_TABLE} (openid, group_id, is_owner)
+                VALUES (%s, %s, FALSE);
+            """
+            self._cursor.execute(join_sql, (openid, group_id))
             self._db.commit()
+            
+            self.logger.info(f"用户 {openid} 成功加入群组 '{group_name}'(ID: {group_id})")
+            return group_id
+            
         except mysql.connector.errors.IntegrityError as err:
             self._db.rollback()
             # 检查是否为外键约束错误
             if "foreign key constraint fails" in str(err).lower():
                 if "users" in str(err).lower():
                     raise self.NoSuchUserError(f"用户 {openid} 不存在")
-                if "groups" in str(err).lower():
-                    raise self.NoSuchGroupError(f"群组 {group_id} 不存在")
             self.logger.error(f"加入群组时出错: {err}")
             raise
         except mysql.connector.Error as err:
