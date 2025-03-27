@@ -1,8 +1,4 @@
 import os
-import sys
-
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import mysql.connector
 from typing import Union
 from utils.log_utils import LOG
@@ -16,12 +12,6 @@ class MysqlUtils:
     USERS_TABLE = "users"
     GROUPS_TABLE = "groups"
     USER_GROUPS_TABLE = "user_groups"
-
-    class NoSuchUserError(Exception):
-        """用户不存在异常"""
-
-    class NoSuchGroupError(Exception):
-        """群组不存在异常"""
 
     def __init__(
         self,
@@ -47,27 +37,6 @@ class MysqlUtils:
         self._password = password if password else os.getenv("MYSQL_PASSWORD", "root")
         self.database = database if database else os.getenv("MYSQL_DATABASE", "weixin")
 
-        try:
-            self.logger.info(f"Checking/Creating database ...")
-            conn = mysql.connector.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self._password,
-            )
-            cursor = conn.cursor()
-
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS {self.database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-            )
-            conn.commit()
-            cursor.close()
-            conn.close()
-        except mysql.connector.Error as err:
-            self.logger.error(f"创建数据库时出错: {err}")
-            raise
-
-        self.logger.info(f"MySQL connecting ...")
         self._db = mysql.connector.connect(
             host=self.host,
             port=self.port,
@@ -76,43 +45,27 @@ class MysqlUtils:
             database=self.database,
         )
         self._cursor = self._db.cursor()
-        self.logger.info(f"MySQL connected.")
+        self.logger.debug(f"MySQL已连接")
 
-        self.create_tables()
+    def __enter__(self):
+        return self
 
-    def __del__(self) -> None:
-        """
-        析构函数，负责在对象被销毁时关闭数据库连接和游标
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
-        这确保了无论如何退出程序，都能正确释放数据库资源，防止连接泄漏
-        """
+    def close(self):
+        if hasattr(self, "_cursor") and self._cursor:
+            self._cursor.close()
+        if hasattr(self, "_db") and self._db:
+            self._db.close()
+        self.logger.debug("MySQL连接已关闭")
+
+    def _ensure_connection(self):
         try:
-            self.logger.info(f"MySQL disconnecting ...")
-
-            # 检查_cursor是否存在且可用
-            if hasattr(self, "_cursor") and self._cursor:
-                try:
-                    self._cursor.close()
-                except (ReferenceError, AttributeError):
-                    # 忽略弱引用错误
-                    pass
-
-            # 检查_db是否存在且可用
-            if hasattr(self, "_db") and self._db:
-                try:
-                    self._db.close()
-                except (ReferenceError, AttributeError):
-                    # 忽略弱引用错误
-                    pass
-
-            self.logger.info(f"MySQL disconnected.")
-        except Exception as e:
-            # 捕获所有异常，因为__del__方法不能抛出异常
-            try:
-                self.logger.error(f"Error during MySQL disconnect: {e}")
-            except:
-                # 如果logger也不可用，则静默失败
-                pass
+            self._db.ping(reconnect=True, attempts=3, delay=5)
+        except mysql.connector.Error as err:
+            self.logger.error(f"数据库连接检查失败: {err}")
+            raise
 
     def create_tables(self) -> None:
         """
@@ -120,6 +73,7 @@ class MysqlUtils:
 
         使用事务确保所有表创建成功或全部回滚
         """
+        self._ensure_connection()
         try:
             # 开始事务
             self._db.start_transaction()
@@ -169,7 +123,7 @@ class MysqlUtils:
             self.logger.error(f"创建数据库表时出错: {err}")
             raise
 
-    def create_user(self, openid: str, nickname: str) -> None:
+    def create_user(self, openid: str, nickname: str) -> bool:
         """
         创建用户
 
@@ -177,9 +131,13 @@ class MysqlUtils:
             openid (str): 用户的openid
             nickname (str): 用户昵称
 
+        Returns:
+            bool: 是否成功创建用户
+
         Raises:
             mysql.connector.Error: 数据库操作错误
         """
+        self._ensure_connection()
         try:
             sql = f"""
                 INSERT INTO {self.USERS_TABLE} (openid, nickname)
@@ -187,18 +145,20 @@ class MysqlUtils:
             """
             self._cursor.execute(sql, (openid, nickname))
             self._db.commit()
+            return True
         except mysql.connector.errors.IntegrityError as err:
             if err.errno == 1062:  # 主键重复错误
                 self.logger.warning(f"用户 {openid} 已存在")
             else:
                 self.logger.error(f"创建用户时出错: {err}")
             self._db.rollback()
-            return
+            return False
         except mysql.connector.Error as err:
             self._db.rollback()
             self.logger.error(f"创建用户时出错: {err}")
+            return False
 
-    def create_group(self, openid: str, name: str) -> int:
+    def create_group(self, openid: str, name: str) -> bool:
         """
         创建群组
         对应公众号命令 /group create <name>
@@ -208,12 +168,13 @@ class MysqlUtils:
             name (str): 群组名称
 
         Returns:
-            int: 新建群组的ID
+            bool: 是否成功创建群组
 
         Raises:
             MysqlUtils.NoSuchUserError: 未找到对应的用户
             mysql.connector.Error: 数据库操作错误
         """
+        self._ensure_connection()
         try:
             sql = f"""
                 INSERT INTO {self.GROUPS_TABLE} (name, owner_openid)
@@ -221,7 +182,7 @@ class MysqlUtils:
             """
             self._cursor.execute(sql, (name, openid))
             self._db.commit()
-            return self._cursor.lastrowid
+            return True
         except mysql.connector.errors.IntegrityError as err:
             if err.errno == 1452:  # 外键约束错误
                 self.logger.warning(f"用户 {openid} 不存在")
@@ -230,31 +191,55 @@ class MysqlUtils:
             else:
                 self.logger.error(f"创建群组时出错: {err}")
             self._db.rollback()
+            return False
         except mysql.connector.Error as err:
             self._db.rollback()
             self.logger.error(f"创建群组时出错: {err}")
+            return False
 
-    def delete_group(self, openid: str, name: str) -> None:
+    def delete_group(self, openid: str, group_name: str) -> bool:
         """
         删除群组
         对应公众号命令 /group delete <name>
 
         Args:
-            name (str): 群组名称
+            openid (str): 用户的openid
+            group_name (str): 群组名称
+
+        Returns:
+            bool: 是否成功删除群组
 
         Raises:
             mysql.connector.Error: 数据库操作错误
         """
+        self._ensure_connection()
         try:
-            sql = f"""
-                DELETE FROM {self.GROUPS_TABLE}
-                WHERE name = %s and owner_openid = %s;
+            # 检查用户是否是群主
+            check_sql = f"""
+                SELECT group_id FROM {self.GROUPS_TABLE}
+                WHERE name = %s AND owner_openid = %s;
             """
-            self._cursor.execute(sql, (name, openid))
+            self._cursor.execute(check_sql, (group_name, openid))
+            if not self._cursor.fetchone():
+                return False
+            # 删除用户-群组关系
+            delete_user_groups_sql = f"""
+                DELETE FROM {self.USER_GROUPS_TABLE}
+                WHERE group_name = %s;
+            """
+            self._cursor.execute(delete_user_groups_sql, (group_name,))
+            # 然后删除群组
+            delete_group_sql = f"""
+                DELETE FROM {self.GROUPS_TABLE}
+                WHERE name = %s;
+            """
+            self._cursor.execute(delete_group_sql, (group_name,))
             self._db.commit()
+            return True
         except mysql.connector.Error as err:
             self._db.rollback()
             self.logger.error(f"删除群组时出错: {err}")
+            return False
 
     def join_group(self, openid: str, group_name: str) -> bool:
         """
@@ -266,11 +251,12 @@ class MysqlUtils:
             group_name (str): 群组名称
 
         Returns:
-            int: 成功加入的群组ID
+            bool: 是否成功加入群组
 
         Raises:
             mysql.connector.Error: 数据库操作错误
         """
+        self._ensure_connection()
         try:
             # 加入群组
             join_sql = f"""
@@ -310,6 +296,7 @@ class MysqlUtils:
         Raises:
             mysql.connector.Error: 数据库操作错误
         """
+        self._ensure_connection()
         try:
             # 离开群组
             leave_sql = f"""
@@ -331,66 +318,31 @@ class MysqlUtils:
             self.logger.error(f"离开群组时出错: {err}")
             return False
 
-    def delete_group(self, openid: str, group_name: str) -> None:
-        """
-        删除群组
-        对应公众号命令 /group delete <name>
-
-        Args:
-            openid (str): 用户的openid
-            group_name (str): 群组名称
-
-        Raises:
-            mysql.connector.Error: 数据库操作错误
-        """
-        try:
-            sql = f"""
-                SELECT * FROM {self.GROUPS_TABLE}
-                WHERE name = %s and owner_openid = %s;
-            """
-            self._cursor.execute(sql, (group_name, openid))
-            if not self._cursor.fetchone():
-                return
-            sql = f"""
-                DELETE FROM {self.GROUPS}
-            """
-            self._db.commit()
-        except mysql.connector.Error as err:
-            self._db.rollback()
-            self.logger.error(f"删除群组时出错: {err}")
-
-    def get_info(self, openid: str):
+    def get_info(self, openid: str) -> dict:
         """
         获取用户信息
         对应公众号命令 /group list
         """
+        self._ensure_connection()
+        result = {"owner": [], "member": []}
         try:
-            result = {
-                "owner": [],
-                "member": [],
-            }
-            sql = f"""
-                SELECT * FROM {self.USER_GROUPS_TABLE} WHERE openid = %s;
+            member_sql = f"""
+                SELECT group_name FROM {self.USER_GROUPS_TABLE} WHERE openid = %s;
             """
-            self._cursor.execute(sql, (openid,))
-            for i in self._cursor.fetchall():
-                result["member"].append(i[1])
-            sql = f"""
-                SELECT * FROM {self.GROUPS_TABLE} WHERE owner_openid = %s;
-            """
-            self._cursor.execute(sql, (openid,))
-            for i in self._cursor.fetchall():
-                result["owner"].append(i[1])
-            print(result)
-            return result
+            self._cursor.execute(member_sql, (openid,))
+            result["member"] = [row[0] for row in self._cursor.fetchall()]
+            owner_sql = f"SELECT name FROM {self.GROUPS_TABLE} WHERE owner_openid = %s;"
+            self._cursor.execute(owner_sql, (openid,))
+            result["owner"] = [row[0] for row in self._cursor.fetchall()]
         except mysql.connector.Error as err:
             self.logger.error(f"获取用户信息时出错: {err}")
-            return None
+        return result
 
-    def get_group_member(self, openid: str, group_name: str):
+    def get_group_member(self, openid: str, group_name: str) -> list:
         """
         获取群组成员
         """
+        self._ensure_connection()
         try:
             result = []
             sql = f"""
@@ -405,25 +357,16 @@ class MysqlUtils:
             self._cursor.execute(sql, (group_name,))
             for i in self._cursor.fetchall():
                 result.append(i[0])
-            return result
         except mysql.connector.errors.IntegrityError as err:
             if err.errno == 1452:  # 外键约束错误
                 self.logger.warning(f"用户 {openid} 或群组 {group_name} 不存在")
             else:
                 self.logger.error(f"获取群组成员时出错: {err}")
-            return None
+            return result
         except mysql.connector.Error as err:
             self.logger.error(f"获取群组成员时出错: {err}")
-            return None
+            return result
 
 
 if __name__ == "__main__":
-    mysql_client = MysqlUtils()
-    # mysql_client.create_user("test1", "test1")
-    # mysql_client.create_group("test_group", "test")
-    # mysql_client.delete_group("test_group", "test")
-    mysql_client.join_group("test1", "test_group")
-    # mysql_client.leave_group("test", "test_group1")
-    mysql_client.get_info("test")
-    mysql_client.get_group_member("test", "test_group")
-    # mysql_client.delete_group("test_group")
+    pass
