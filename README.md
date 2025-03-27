@@ -26,12 +26,11 @@
 
  - `/id` 获取用户的openid
  - `/group`
-   - `/group list` 列出所有相关的群组
+   - `/group list` 列出创建的群组和加入的群组
    - `/group create <name>` 创建一个群组
    - `/group delete <name>` 删除一个群组
-   - `/group add <name> <openid>` 添加一个用户到群组（不打算实现）
-   - `/group remove <name> <openid>` 从一个群组删除一个用户（不打算实现）
-   - `/group info <name>` 查看一个群组的信息，包括加入链接
    - `/group join <name>` 加入一个群组
    - `/group leave <name>` 离开一个群组
- - `/info` 查看用户信息
+   - `/group add <name> <openid>` 添加一个用户到群组（不打算实现）
+   - `/group remove <name> <openid>` 从一个群组删除一个用户（不打算实现）
+ - `/info` 查看用户信息（不打算实现）
