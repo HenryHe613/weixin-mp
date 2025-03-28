@@ -3,14 +3,17 @@ import re
 import time
 import json
 import hashlib
+from aiomysql import Connection
 from datetime import datetime
 from dotenv import load_dotenv
 from utils.mp_utils import MPUtils
+from utils.mysql_pool import MySQLPool
 from utils.mysql_utils import MysqlUtils
 from utils.redis_utils import RedisUtils
-from utils.mongo_utils import MongoUtils
+from utils.mongo_utils import MongoUtils, AsyncMongoUtils
 import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, Response, Depends
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
@@ -19,17 +22,33 @@ with MysqlUtils() as mysql_client:
     mysql_client.create_tables()
 
 
-def get_mysql_client():
-    client = MysqlUtils()
+async def get_mysql():
+    conn = await MySQLPool.get_connection()
     try:
-        yield client
+        yield conn
     finally:
-        client.close()
+        await MySQLPool.release_connection(conn)
 
 
-app = FastAPI()
+async def get_mongo():
+    return app.state.mongo_client
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 应用启动时创建连接池
+    await MySQLPool.create_pool()
+    # 创建MongoDB客户端
+    app.state.mongo_client = AsyncMongoUtils()
+    yield
+    # 应用关闭时销毁连接池
+    await MySQLPool.close_pool()
+    # 关闭MongoDB连接
+    await app.state.mongo_client.close()
+
+
+app = FastAPI(lifespan=lifespan)
 redis_client = RedisUtils()
-mongo_client = MongoUtils()
 mp = MPUtils()
 
 
@@ -61,7 +80,7 @@ async def verify_server(request: Request):
 @app.post(MAIN_PATH)
 async def handle_message(
     request: Request,
-    mysql_client: MysqlUtils = Depends(get_mysql_client),
+    conn: Connection = Depends(get_mysql),
 ):
     def generate_xml(to_user: str, from_user: str, content: str) -> str:
         # 生成微信要求的 XML 响应
@@ -89,7 +108,11 @@ async def handle_message(
             # 返回 OpenID
             reply = f"您的 OpenID 是：{from_user}"
             try:
-                mysql_client.create_user(from_user, from_user)
+                await MysqlUtils.create_user(
+                    conn=conn,
+                    openid=from_user,
+                    nickname=from_user,
+                )
             except Exception as e:
                 reply = f"创建用户失败：{e}"
 
@@ -114,7 +137,11 @@ async def handle_message(
                 if re.fullmatch(r"^[\w]+$", group_name):
                     # 群组名只能包含字母、数字和下划线
                     try:
-                        if mysql_client.create_group(openid=from_user, name=group_name):
+                        if await MysqlUtils.create_group(
+                            conn=conn,
+                            openid=from_user,
+                            name=group_name,
+                        ):
                             reply = f"群组 {group_name} 创建成功"
                         else:
                             reply = f"群组 {group_name} 创建失败"
@@ -126,8 +153,10 @@ async def handle_message(
                 # 删除群组, 对应命令 /group delete <name>
                 group_name = content_block[2]
                 try:
-                    if mysql_client.delete_group(
-                        openid=from_user, group_name=group_name
+                    if await MysqlUtils.delete_group(
+                        conn=conn,
+                        openid=from_user,
+                        group_name=group_name,
                     ):
                         reply = f"成功删除群组 {group_name}"
                     else:
@@ -138,7 +167,11 @@ async def handle_message(
                 # 加入群组, 对应命令 /group join <name>
                 group_name = content_block[2]
                 try:
-                    if mysql_client.join_group(openid=from_user, group_name=group_name):
+                    if await MysqlUtils.join_group(
+                        conn=conn,
+                        openid=from_user,
+                        group_name=group_name,
+                    ):
                         reply = f"成功加入群组 {group_name}"
                     else:
                         reply = f"群组 {group_name} 不存在/已加入"
@@ -148,8 +181,10 @@ async def handle_message(
                 # 离开群组, 对应命令 /group leave <name>
                 group_name = content_block[2]
                 try:
-                    if mysql_client.leave_group(
-                        openid=from_user, group_name=group_name
+                    if await MysqlUtils.leave_group(
+                        conn=conn,
+                        openid=from_user,
+                        group_name=group_name,
                     ):
                         reply = f"成功退出群组 {group_name}（有没有种可能，根本没有这个群组，或你没有加入过）"
                     else:
@@ -158,7 +193,7 @@ async def handle_message(
                     reply = f"退出群组失败：{e}"
             elif len(content_block) == 2 and content_block[1] == "list":
                 # 列出所有群组, 对应命令 /group list
-                group_list = mysql_client.get_info(from_user)
+                group_list = await MysqlUtils.get_info(conn=conn, openid=from_user)
                 reply = ""
                 if len(group_list["owner"]) > 0:
                     reply += "创建的群组：\n" + "\n".join(group_list["owner"]) + "\n"
@@ -178,7 +213,8 @@ async def handle_message(
 @app.post(MAIN_PATH + "/send")
 async def send_message(
     request: Request,
-    mysql_client: MysqlUtils = Depends(get_mysql_client),
+    conn: Connection = Depends(get_mysql),
+    mongo_client: AsyncMongoUtils = Depends(get_mongo),
 ):
     # 处理模板消息推送（POST 请求）
     client_ip = request.client.host
@@ -188,13 +224,12 @@ async def send_message(
 
     required_keys = {"openid", "title", "content"}
     if not required_keys.issubset(body.keys()):
-        missing_keys = required_keys - body.keys()
         return Response(
             content=json.dumps({"code": 400, "msg": "Missing parameters."}),
             status_code=400,
             media_type="application/json",
         )
-    mongo_result = mongo_client.insert(
+    mongo_result = await mongo_client.insert(
         {
             "openid": body["openid"],
             "title": body["title"],
@@ -205,8 +240,10 @@ async def send_message(
     )
     # print(mongo_result)
     if "group" in body:
-        group_list = mysql_client.get_group_member(
-            openid=body["openid"], group_name=body["group"]
+        group_list = await MysqlUtils.get_group_member(
+            conn=conn,
+            openid=body["openid"],
+            group_name=body["group"],
         )
         result = {"msg": "nobody in group."}
         for openid in group_list:
@@ -215,7 +252,7 @@ async def send_message(
                 title=body["title"],
                 ip=client_ip,
                 date=time_now,
-                redirect_url=DOMAIN + "/weixin_msg/" + str(mongo_result.inserted_id),
+                redirect_url=DOMAIN + "/weixin_msg/" + str(mongo_result['inserted_id']),
             )
             print(result)
     else:
@@ -224,15 +261,18 @@ async def send_message(
             title=body["title"],
             ip=client_ip,
             date=time_now,
-            redirect_url=DOMAIN + "/weixin_msg/" + str(mongo_result.inserted_id),
+            redirect_url=DOMAIN + "/weixin_msg/" + str(mongo_result['inserted_id']),
         )
     return Response(content=json.dumps(result), media_type="application/json")
 
 
 @app.get(MAIN_PATH + "/message")
-async def get_message(id: str):
+async def get_message(
+    id: str,
+    mongo_client: AsyncMongoUtils = Depends(get_mongo),
+):
     # 获取推送详细信息
-    result = mongo_client.find_one({"_id": id})
+    result = await mongo_client.find_one({"_id": id})
     del result["openid"]
     return Response(content=json.dumps(result), media_type="application/json")
 
