@@ -1,5 +1,6 @@
 aiohappyeyeballs==2.6.1
 aiohttp==3.11.14
+aiomysql==0.2.0
 aiosignal==1.3.2
 annotated-types==0.7.0
 anyio==4.9.0
@@ -22,6 +23,7 @@ Jinja2==3.1.6
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 mdurl==0.1.2
+motor==3.7.0
 multidict==6.2.0
 mysql-connector-python==9.2.0
 propcache==0.3.0
@@ -29,6 +31,7 @@ pydantic==2.10.6
 pydantic_core==2.27.2
 Pygments==2.19.1
 pymongo==4.11.3
+PyMySQL==1.1.1
 python-dotenv==1.0.1
 python-multipart==0.0.20
 PyYAML==6.0.2
