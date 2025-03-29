@@ -34,3 +34,28 @@
    - `/group add <name> <openid>` 添加一个用户到群组（不打算实现）
    - `/group remove <name> <openid>` 从一个群组删除一个用户（不打算实现）
  - `/info` 查看用户信息（不打算实现）
+
+## 项目目录
+
+```
+├── app
+│   ├── core              # 核心配置和工具
+│   │   ├── config.py     # 配置管理
+│   │   ├── dependencies.py # 依赖注入
+│   │   └── logger.py     # 日志配置
+│   ├── database          # 数据库相关
+│   │   ├── mysql.py      # MySQL连接池
+│   │   ├── mongo.py      # MongoDB客户端
+│   │   └── redis.py      # Redis客户端
+│   ├── routes            # 路由模块
+│   │   ├── wechat.py     # 微信消息处理路由
+│   │   └── message.py    # 消息推送路由
+│   ├── services          # 业务逻辑层
+│   │   ├── wechat.py     # 微信消息处理服务
+│   │   └── message.py    # 消息推送服务
+│   └── main.py           # FastAPI入口
+├── tests                 # 测试目录
+├── alembic               # 数据库迁移目录
+├── requirements.txt      # 依赖列表
+└── .env                  # 环境变量
+```

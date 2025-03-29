@@ -15,21 +15,21 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
 
-  weixin-redis:
+  redis:
     image: redis/redis-stack:latest
     container_name: weixin-redis
     restart: unless-stopped
-    networks_mode: bridge
+    network_mode: bridge
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - ./redis_data:/data
   
-  mongo:
+  mongodb:
     image: mongo:latest
     container_name: weixin-mongodb
     restart: unless-stopped
-    networks_mode: bridge
+    network_mode: bridge
     ports:
       - "127.0.0.1:27017:27017"
     environment:

@@ -1,20 +1,28 @@
-import os
 import time
 import requests
 import threading
 from aiohttp import ClientSession
-from utils.log_utils import LOG
-from utils.redis_utils import RedisUtils
+from app.core.logger import LOG
+from app.core.config import settings
+from app.database.redis_sync import Redis
 
 
 class MPUtils:
     logger = LOG(level=LOG.DEBUG).logger
+    _instance = None
+    _initialized = False
+    stop_event = threading.Event()
+
+    def __new__(cls):
+        # 如果实例不存在，则创建新实例
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self):
-        self.APPID = os.getenv("APPID")
-        self.APPSECRET = os.getenv("APPSECRET")
-        self.TEMPLATE_ID = os.getenv("TEMPLATE_ID")
-        self.redis_client = RedisUtils()
+        if self._initialized:
+            return
+        self.redis_client = Redis()
         self.access_token = (
             self.redis_client.get("access_token", decode=True)
             if self.redis_client.exists("access_token")
@@ -26,12 +34,15 @@ class MPUtils:
         )
         self.thread_refresh_access_token.start()
         self.logger.info(f"access_token: {self.access_token}")
+        
+        self._initialized = True
 
     def __del__(self):
         try:
             self.logger.info("正在停止access_token刷新线程...")
 
-            self.stop_event.set()  # 使用事件通知线程停止
+            # 使用事件通知线程停止
+            self.stop_event.set()
 
             # 设置join超时，防止永久阻塞
             self.thread_refresh_access_token.join(timeout=2.0)
@@ -47,8 +58,8 @@ class MPUtils:
         url = "https://api.weixin.qq.com/cgi-bin/token"
         params = {
             "grant_type": "client_credential",
-            "appid": self.APPID,
-            "secret": self.APPSECRET,
+            "appid": settings.appid,
+            "secret": settings.appsecret,
         }
         response = requests.get(url, params=params)
         self.access_token = response.json()["access_token"]
@@ -63,25 +74,12 @@ class MPUtils:
             else:
                 time.sleep(1)
 
-    def get_user_list(self):
-        url = f"https://api.weixin.qq.com/cgi-bin/user/get"
-        params = {"access_token": self.access_token}
-        response = requests.get(url, params=params)
-        return response.json()
-
-    def send_template_message(self, openid, template_id, data):
-        url = f"https://api.weixin.qq.com/cgi-bin/message/template/send"
-        params = {"access_token": self.access_token}
-        data = {"touser": openid, "template_id": template_id, "data": data}
-        response = requests.post(url, json=data, params=params)
-        return response.json()
-
     async def send_message(self, openid, title, ip, date, redirect_url):
         url = "https://api.weixin.qq.com/cgi-bin/message/template/send"
         params = {"access_token": self.access_token}
         data = {
             "touser": openid,
-            "template_id": self.TEMPLATE_ID,
+            "template_id": settings.template_id,
             "url": redirect_url,
             "data": {
                 "thing18": {"value": title},
@@ -91,32 +89,8 @@ class MPUtils:
         }
         async with ClientSession() as session:
             async with session.post(url, params=params, json=data) as response:
-                result = await response.json()
-                return result
-
-    def test(self):
-        url = "https://open.weixin.qq.com/connect/oauth2/authorize#wechat_redirect"
-        params = {
-            "appid": APPID,
-            "redirect_uri": "https://api.example.com/mp/login?id=",
-            "response_type": "code",
-            "scope": "snsapi_userinfo",
-            "connect_redirect": 1,
-        }
-        response = requests.get(url, params=params)
-        print(response.status_code)
-        print(response.text)
+                return await response.json()
 
 
 if __name__ == "__main__":
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    APPID = os.getenv("APPID")
-    APPSECRET = os.getenv("APPSECRET")
-    OPENID = os.getenv("OPENID")
-    TEMPLATE_ID = os.getenv("TEMPLATE_ID")
-
-    mp_utils = MPUtils()
-    print(mp_utils.get_user_list())
+    pass
