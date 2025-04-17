@@ -1,22 +1,38 @@
 services:
   weixin-mp:
-    image: henryhe613/weixin-mp:0.1
+    image: henryhe613/weixin-mp:0.4
     container_name: weixin-mp
     network_mode: host
     restart: unless-stopped
     environment:
       - APPID=
       - APPSECRET=
-      - OPENID=
       - TEMPLATE_ID=
       - VERIFY_TOKEN=
-      - WEB_PORT=80
-      - REDIS_HOST=weixin-redis
-      - REDIS_PORT=6379
+      - MAIN_PATH=/wechat
+      - DOMAIN=
+      - WEB_PORT=8080
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=
       - REDIS_DB=0
+      - MONGO_HOST=127.0.0.1
+      - MONGO_PORT=
+      - MONGO_USERNAME=root
+      - MONGO_PASSWORD=root
+      - MONGO_DATABASE=wechat
+      - MONGO_COLLECTION=wechat
+      - MYSQL_HOST=127.0.0.1
+      - MYSQL_PORT=
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=weixin
+    depends_on:
+      - redis
+      - mongo
+      - mysql
 
   redis:
-    image: redis/redis-stack:latest
+    image: redis/redis-stack:7.4.0-v3
     container_name: weixin-redis
     restart: unless-stopped
     network_mode: bridge
@@ -24,9 +40,14 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
   
-  mongodb:
-    image: mongo:latest
+  mongo:
+    image: mongo:8.0.8
     container_name: weixin-mongodb
     restart: unless-stopped
     network_mode: bridge
@@ -37,6 +58,11 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: root
     volumes:
       - ./mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
   
   mysql:
     image: mysql:5.7.44
@@ -59,3 +85,8 @@ services:
       --collation-server=utf8mb4_general_ci
       --explicit_defaults_for_timestamp=true
       --lower_case_table_names=1
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p", "root"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
