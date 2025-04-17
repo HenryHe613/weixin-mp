@@ -24,17 +24,18 @@ class MPUtils:
             return
         self.redis_client = Redis()
         self.access_token = (
-            self.redis_client.get("access_token", decode=True)
+            self.redis_client.get("access_token")
             if self.redis_client.exists("access_token")
             else None
         )
         self.stop_event = threading.Event()  # 使用本地事件
         self.thread_refresh_access_token = threading.Thread(
-            target=self.refresh_access_token, daemon=True
+            target=self.refresh_access_token,
+            daemon=True,
         )
         self.thread_refresh_access_token.start()
         self.logger.info(f"access_token: {self.access_token}")
-        
+
         self._initialized = True
 
     def __del__(self):
